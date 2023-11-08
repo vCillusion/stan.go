@@ -40,6 +40,7 @@ const (
 	DefaultIgnoreOld          = false
 	DefaultMaxPubAcksInflight = 512
 	DefaultClientID           = "benchmark"
+	DefaultManualAck          = false
 )
 
 func usage() {
@@ -66,6 +67,7 @@ func main() {
 	var ignoreOld = flag.Bool("io", DefaultIgnoreOld, "Subscribers ignore old messages")
 	var maxPubAcks = flag.Int("mpa", DefaultMaxPubAcksInflight, "Max number of published acks in flight")
 	var clientID = flag.String("id", DefaultClientID, "Benchmark process base client ID")
+	var manualAck = flag.Bool("manualAck", DefaultManualAck, "Manual Acknowledgement Enabled")
 	var csvFile = flag.String("csv", "", "Save bench data to csv file")
 	var queue = flag.String("qgroup", "", "Queue group name")
 	var userCreds = flag.String("creds", "", "Credentials File")
@@ -121,7 +123,7 @@ func main() {
 	startwg.Add(*numSubs)
 	for i := 0; i < *numSubs; i++ {
 		subID := fmt.Sprintf("%s-sub-%d", *clientID, i)
-		go runSubscriber(&startwg, &donewg, *urls, opts, clusterID, subID, *queue, *numMsgs, *messageSize, *ignoreOld)
+		go runSubscriber(&startwg, &donewg, *urls, opts, clusterID, subID, *queue, *numMsgs, *messageSize, *ignoreOld, *manualAck)
 	}
 	startwg.Wait()
 
@@ -207,7 +209,7 @@ func runPublisher(startwg, donewg *sync.WaitGroup, url string, opts []nats.Optio
 	donewg.Done()
 }
 
-func runSubscriber(startwg, donewg *sync.WaitGroup, url string, opts []nats.Option, clusterID, subID, queue string, numMsgs, msgSize int, ignoreOld bool) {
+func runSubscriber(startwg, donewg *sync.WaitGroup, url string, opts []nats.Option, clusterID, subID, queue string, numMsgs, msgSize int, ignoreOld bool, manualAck bool) {
 	nc, err := nats.Connect(url, opts...)
 	if err != nil {
 		log.Fatalf("Subscriber %s can't connect: %v\n", subID, err)
@@ -244,9 +246,17 @@ func runSubscriber(startwg, donewg *sync.WaitGroup, url string, opts []nats.Opti
 
 	var sub stan.Subscription
 	if ignoreOld {
-		sub, err = snc.QueueSubscribe(subj, queue, mcb)
+		if manualAck {
+			sub, err = snc.QueueSubscribe(subj, queue, mcb, stan.SetManualAckMode())
+		} else {
+			sub, err = snc.QueueSubscribe(subj, queue, mcb)
+		}
 	} else {
-		sub, err = snc.QueueSubscribe(subj, queue, mcb, stan.DeliverAllAvailable())
+		if manualAck {
+			sub, err = snc.QueueSubscribe(subj, queue, mcb, stan.DeliverAllAvailable(), stan.SetManualAckMode())
+		} else {
+			sub, err = snc.QueueSubscribe(subj, queue, mcb, stan.DeliverAllAvailable())
+		}
 	}
 	if err != nil {
 		log.Fatalf("Subscriber %s can't subscribe: %v", subID, err)
